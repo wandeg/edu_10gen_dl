@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title></title>
+	</head>
+	<body>
+		<div id="course_list">
+			<form name="course_dl_form">
+				{% for c in courselist %}
+					<input type="checkbox" value={{c.url}}>{{c.name}}<br/>
+				{% endfor %}
+			</form>
+		</div>
+
+		<div id="chapter_list">
+			<form name="chapter_dl_form" action="/download" method="POST">
+				{% for item,value in chapterlist.items() %}
+					{% set chaps = value %}
+					{% if chaps|length >1 %}
+						{% set firstchap =  chaps[0] %}
+						<h1>{{firstchap[0]|string}}</h1>
+						{% set currchap =  firstchap[3] %}
+						<h3>{{firstchap[0]| string}} -- {{currchap| string}}</h3>
+						{% for chap in chaps %}
+							{% set currchap2 = chap[3] %}
+							{% if currchap2 != currchap %}
+								{% set currchap = currchap2 %}
+								<h3>{{chap[0]| string}} -- {{currchap| string}}</h3>
+							{% endif %}
+						<input type="checkbox" name="chapters[]" value='{{chap}}'>{{chap[4]|safe| string}}<br/>
+							
+						{% endfor %}
+					{% endif %}
+				{% endfor %}
+				<input type="submit">
+			</form>
+		</div>
+
+	</body>
+</html>

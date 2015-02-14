@@ -15,19 +15,24 @@ from urllib import urlencode
 from youtube_dl.YoutubeDL import YoutubeDL
 from youtube_dl.extractor  import YoutubeIE
 from youtube_dl.utils import sanitize_filename
+from flask import Flask, render_template, request, redirect, jsonify
 
 import config
 
-replace_space_with_underscore = True
+app = Flask(__name__)
+replace_space_with_underscore = False
 base_url = 'https://'+config.DOMAIN
 # Dirty hack for differences in 10gen and edX implementation
 if 'edx' in config.DOMAIN.split('.'):
     login_url = '/login_ajax'
+    article_tags_css_class = 'course honor'
 else:
     login_url = '/login'
+    article_tags_css_class = 'my-course'
 
 dashboard_url = '/dashboard'
 youtube_url = 'http://www.youtube.com/watch?v='
+DIRECTORY = os.path.curdir
 
 def makeCsrf():
     t = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -51,6 +56,8 @@ def csrfCookie(csrftoken):
             comment=None, comment_url=None,
             rest={'HttpOnly': None}, rfc2109=False)
 
+def cleanString(stringy):
+    return stringy.strip()
 
 class EdXBrowser(object):
     def __init__(self, config):
@@ -66,6 +73,7 @@ class EdXBrowser(object):
         self._fd = YoutubeDL(config.YDL_PARAMS)
         self._fd.add_info_extractor(YoutubeIE())
         self._config = config
+        self._alldata = {}
 
     def login(self):
         try:
@@ -83,7 +91,7 @@ class EdXBrowser(object):
         if self._logged_in:
             dashboard = self._br.open(base_url + dashboard_url)
             dashboard_soup = BeautifulSoup(dashboard.read())
-            my_courses = dashboard_soup.findAll('article', 'my-course')
+            my_courses = dashboard_soup.findAll('article', article_tags_css_class)
             i = 0
             for my_course in my_courses:
                 course_url = my_course.a['href']
@@ -106,48 +114,69 @@ class EdXBrowser(object):
             print "Getting chapters..."
             course = self.courses[course_i]
             course_name = course['name']
-            courseware = self._br.open(base_url+course['url'])
-            courseware_soup = BeautifulSoup(courseware.read())
-            chapters = courseware_soup.findAll('div','chapter')
-            i = 0
-            for chapter in chapters:
-                chapter_name = chapter.find('h3').find('a').text
+            print(base_url+course['url'])
+            if 'courses' in course['url']:
+                courseware = self._br.open(base_url+course['url'])
+                courseware_soup = BeautifulSoup(courseware.read())
+                chapters = courseware_soup.findAll('div','chapter')
+                i = 0
+                for chapter in chapters:
+                    chapter_name = chapter.find('h3').find('a').text
 
-                if self._config.interactive_mode:
-                    launch_download_msg = 'Download the chapter [%s - %s]? (y/n) ' % (course_name, chapter_name)
-                    launch_download = raw_input(launch_download_msg)
-                    if (launch_download.lower() == "n"):
-                        continue
-                
-                i += 1
-                print '\t[%02i] %s' % (i, chapter_name)
-                paragraphs = chapter.find('ul').findAll('li')
-                j = 0
-                for paragraph in paragraphs:
-                    j += 1
-                    par_name = paragraph.p.text
-                    par_url = paragraph.a['href']
-                    self.paragraphs.append((course_name, i, j, chapter_name, par_name, par_url))
-                    print '\t\t[%02i.%02i] %s' % (i, j, par_name)
+                    if self._config.interactive_mode:
+                        launch_download_msg = 'Download the chapter [%s - %s]? (y/n) ' % (course_name, chapter_name)
+                        launch_download = raw_input(launch_download_msg)
+                        if (launch_download.lower() == "n"):
+                            continue
+                    
+                    i += 1
+                    # print '\t[%02i] %s' % (i, chapter_name)
+                    paragraphs = chapter.find('ul').findAll('li')
+                    j = 0
+                    for paragraph in paragraphs:
+                        j += 1
+                        par_name = paragraph.p.text
+                        par_url = paragraph.a['href']
+                        data=(cleanString(course_name), i, j, cleanString(chapter_name), cleanString(par_name), par_url)
+                        # print [(i,type(i)) for i in data]
+                        self.paragraphs.append(data)
+                        # print '\t\t[%02i.%02i] %s' % (i, j, par_name)
+                return self.paragraphs
+            else:
+                return []
 
-    def download(self):
+
+
+config.interactive_mode = ('--interactive' in sys.argv)
+
+if config.interactive_mode:
+    sys.argv.remove('--interactive')
+
+if len(sys.argv) >= 2:
+    DIRECTORY = sys.argv[-1].strip('"')                
+edxb = EdXBrowser(config)
+@app.route('/download', methods=['POST'])
+def download():
         print "\n-----------------------\nStart downloading\n-----------------------\n"
-        for (course_name, i, j, chapter_name, par_name, url) in self.paragraphs:
+        pars=request.form.getlist("chapters[]")
+        items=[par.replace(')',"").replace('(',"").split(',') for par in pars]
+        for (course_name, i, j, chapter_name, par_name, url) in items:
             #nametmpl = sanitize_filename(course_name) + '/' \
             #         + sanitize_filename(chapter_name) + '/' \
             #         + '%02i.%02i.*' % (i,j)
             #fn = glob.glob(DIRECTORY + nametmpl)
             nametmpl = os.path.join(DIRECTORY,
-                                    sanitize_filename(course_name, replace_space_with_underscore),
-                                    sanitize_filename(chapter_name, replace_space_with_underscore),
-                                    '%02i.%02i.*' % (i,j))
+                                    sanitize_filename(course_name.encode('utf-8'), replace_space_with_underscore),
+                                    sanitize_filename(chapter_name.encode('utf-8'), replace_space_with_underscore),
+                                    '%02i.%02i.*' % (int(i), int(j)))
             fn = glob.glob(nametmpl)
             
             if fn:
                 print "Processing of %s skipped" % nametmpl
                 continue
             print "Processing %s..." % nametmpl
-            par = self._br.open(base_url + url)
+            new_url=base_url+url.encode('utf-8')[2:-1].replace("'","")
+            par = edxb._br.open(str(new_url))
             par_soup = BeautifulSoup(par.read())
             contents = par_soup.findAll('div','seq_contents')
             k = 0
@@ -160,7 +189,7 @@ class EdXBrowser(object):
                     video_id = video_stream.split(':')[1]
                     video_url = youtube_url + video_id
                     k += 1
-                    print '[%02i.%02i.%02i] %s (%s)' % (i, j, k, par_name, video_type)
+                    print '[%02i.%02i.%02i] %s (%s)' % (int(i), int(j), k, par_name, video_type)
                     #f.writelines(video_url+'\n')
                     #outtmpl = DIRECTORY + sanitize_filename(course_name) + '/' \
                     #        + sanitize_filename(chapter_name) + '/' \
@@ -169,36 +198,40 @@ class EdXBrowser(object):
                     outtmpl = os.path.join(DIRECTORY,
                         sanitize_filename(course_name, replace_space_with_underscore),
                         sanitize_filename(chapter_name, replace_space_with_underscore),
-                        '%02i.%02i.%02i ' % (i,j,k) + \
+                        '%02i.%02i.%02i ' % (int(i),int(j),k) + \
                         sanitize_filename('%s (%s)' % (par_name, video_type), replace_space_with_underscore) + '.%(ext)s')
-                    self._fd.params['outtmpl'] = outtmpl
-                    self._fd.download([video_url])
+                    edxb._fd.params['outtmpl'] = outtmpl
+                    edxb._fd.download([video_url])
                 except Exception as e:
-                    #print "Error: %s" % e
+                    # print "Error: %s" % e
                     pass
 
-if __name__ == '__main__':
-    config.interactive_mode = ('--interactive' in sys.argv)
+        return redirect('/')
 
-    if config.interactive_mode:
-        sys.argv.remove('--interactive')
-
-    if len(sys.argv) >= 2:
-        DIRECTORY = sys.argv[-1].strip('"')
-    else:
-        DIRECTORY = os.path.curdir
-    print 'Downloading to ''%s'' directory' % DIRECTORY
-
-    edxb = EdXBrowser(config)
+@app.route('/')
+def main():
+        # print 'Downloading to ''%s'' directory' % DIRECTORY
+    
     edxb.login()
     print 'Found the following courses:'
     edxb.list_courses()
     if edxb.courses:
         print "Processing..."
+        # return render_template('index.html', courselist=edxb.courses)
     else:
         print "No courses selected, nothing to download"
     for c in range(len(edxb.courses)):
-        print 'Course: ' + str(edxb.courses[c])
-        print 'Chapters:'
-        edxb.list_chapters(c)
-        edxb.download()
+        # print 'Course: ' + str(edxb.courses[c])
+        # print 'Chapters:'
+        try:
+            val=edxb.list_chapters(c)
+            # print val
+            edxb._alldata[c]=val
+        except Exception, e:
+            pass
+        # edxb.download()
+    return render_template('index.html', chapterlist=edxb._alldata)
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
