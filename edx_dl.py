@@ -155,6 +155,10 @@ if config.interactive_mode:
 if len(sys.argv) >= 2:
     DIRECTORY = sys.argv[-1].strip('"')                
 edxb = EdXBrowser(config)
+edxb.login()
+print 'Found the following courses:'
+edxb.list_courses()
+
 @app.route('/download', methods=['POST'])
 def download():
         print "\n-----------------------\nStart downloading\n-----------------------\n"
@@ -208,29 +212,29 @@ def download():
 
         return redirect('/')
 
-@app.route('/')
-def main():
-        # print 'Downloading to ''%s'' directory' % DIRECTORY
-    
-    edxb.login()
-    print 'Found the following courses:'
-    edxb.list_courses()
-    if edxb.courses:
-        print "Processing..."
-        # return render_template('index.html', courselist=edxb.courses)
-    else:
-        print "No courses selected, nothing to download"
-    for c in range(len(edxb.courses)):
+@app.route('/listchapters', methods=['POST'])
+def displayCourseData():
+    courses=request.form.getlist('courses[]')
+    for c in courses:
         # print 'Course: ' + str(edxb.courses[c])
         # print 'Chapters:'
         try:
-            val=edxb.list_chapters(c)
+            val=edxb.list_chapters(int(c))
             # print val
             edxb._alldata[c]=val
         except Exception, e:
-            pass
-        # edxb.download()
+            print "Error: %s" % e
     return render_template('index.html', chapterlist=edxb._alldata)
+
+@app.route('/')
+def main():
+        # print 'Downloading to ''%s'' directory' % DIRECTORY
+    if edxb.courses:
+        print "Processing..."
+        return render_template('index.html', courselist=edxb.courses)
+    else:
+        print "No courses selected, nothing to download"
+    
 
 
 if __name__ == '__main__':
