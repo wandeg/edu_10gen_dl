@@ -18,6 +18,7 @@ from youtube_dl.utils import sanitize_filename
 from flask import Flask, render_template, request, redirect, jsonify
 
 import config
+import ast
 
 app = Flask(__name__)
 replace_space_with_underscore = False
@@ -94,6 +95,7 @@ class EdXBrowser(object):
             my_courses = dashboard_soup.findAll('article', article_tags_css_class)
             i = 0
             for my_course in my_courses:
+                # print dir(my_course)
                 course_url = my_course.a['href']
                 course_name = my_course.h3.text
                 
@@ -106,7 +108,7 @@ class EdXBrowser(object):
                 i += 1
                 courseware_url = re.sub(r'\/info$','/courseware',course_url)
                 self.courses.append({'name':course_name, 'url':courseware_url})
-                print '[%02i] %s' % (i, course_name)
+                # print '[%02i] %s' % (i, course_name)
 
     def list_chapters(self, course_i):
         self.paragraphs = []
@@ -163,8 +165,17 @@ edxb.list_courses()
 def download():
         print "\n-----------------------\nStart downloading\n-----------------------\n"
         pars=request.form.getlist("chapters[]")
-        items=[par.replace(')',"").replace('(',"").split(',') for par in pars]
-        for (course_name, i, j, chapter_name, par_name, url) in items:
+        # for par in pars:
+        #     print par,type(ast.literal_eval(par))
+        # items=[par.replace(')',"").replace('(',"").split(',') for par in pars]
+        # items = [ast.literal_eval(par) for par in pars]
+        # print len(items)
+        # print [a for a in items if len(a)>6]
+        for p in pars:
+            item = ast.literal_eval(p)
+            print len(item),item
+            course_name, i, j, chapter_name, par_name, url = item[0:7]
+            # for course_name, i, j, chapter_name, par_name, url in :
             #nametmpl = sanitize_filename(course_name) + '/' \
             #         + sanitize_filename(chapter_name) + '/' \
             #         + '%02i.%02i.*' % (i,j)
@@ -179,35 +190,52 @@ def download():
                 print "Processing of %s skipped" % nametmpl
                 continue
             print "Processing %s..." % nametmpl
-            new_url=base_url+url.encode('utf-8')[2:-1].replace("'","")
+            print url
+            new_url=base_url+url.encode('utf-8')[:-1].replace("'","")
+            print new_url
             par = edxb._br.open(str(new_url))
             par_soup = BeautifulSoup(par.read())
             contents = par_soup.findAll('div','seq_contents')
             k = 0
             for content in contents:
-                #print "Content: %s" % content
+                # print "Content: %s" % content
                 content_soup = BeautifulSoup(content.text)
+                # print content_soup.find_all('h2')
+                vs = content_soup.find_all('div','video')
+                for v in vs:
+                    print v.attrs.keys()
                 try:
-                    video_type = content_soup.h2.text.strip()
-                    video_stream = content_soup.find('div','video')['data-streams']
-                    video_id = video_stream.split(':')[1]
-                    video_url = youtube_url + video_id
-                    k += 1
-                    print '[%02i.%02i.%02i] %s (%s)' % (int(i), int(j), k, par_name, video_type)
-                    #f.writelines(video_url+'\n')
-                    #outtmpl = DIRECTORY + sanitize_filename(course_name) + '/' \
-                    #        + sanitize_filename(chapter_name) + '/' \
-                    #        + '%02i.%02i.%02i ' % (i,j,k) \
-                    #        + sanitize_filename('%s (%s)' % (par_name, video_type)) + '.%(ext)s'
-                    outtmpl = os.path.join(DIRECTORY,
-                        sanitize_filename(course_name, replace_space_with_underscore),
-                        sanitize_filename(chapter_name, replace_space_with_underscore),
-                        '%02i.%02i.%02i ' % (int(i),int(j),k) + \
-                        sanitize_filename('%s (%s)' % (par_name, video_type), replace_space_with_underscore) + '.%(ext)s')
-                    edxb._fd.params['outtmpl'] = outtmpl
-                    edxb._fd.download([video_url])
+                    # video_type = content_soup.h2.text.strip()
+                    if content_soup.h2:
+                        video_type = content_soup.h2.text
+                        # print video_type
+                    vs = content_soup.find_all('div','video')
+                    for v in vs:
+                        print v.attrs.keys()
+                        if v.attrs.has_key('streams'):
+                            video_stream = v['streams']
+                            # video_stream = content_soup.find('div','video')['streams']
+                            video_id = video_stream.split(':')[1]
+                            video_url = youtube_url + video_id
+                            print video_url
+                            k += 1
+                            print '[%02i.%02i.%02i] %s (%s)' % (int(i), int(j), k, par_name, video_type)
+                            #f.writelines(video_url+'\n')
+                            #outtmpl = DIRECTORY + sanitize_filename(course_name) + '/' \
+                            #        + sanitize_filename(chapter_name) + '/' \
+                            #        + '%02i.%02i.%02i ' % (i,j,k) \
+                            #        + sanitize_filename('%s (%s)' % (par_name, video_type)) + '.%(ext)s'
+                            print DIRECTORY
+                            outtmpl = os.path.join(DIRECTORY,
+                                sanitize_filename(course_name, replace_space_with_underscore),
+                                sanitize_filename(chapter_name, replace_space_with_underscore),
+                                '%02i.%02i.%02i ' % (int(i),int(j),k) + \
+                                sanitize_filename('%s (%s)' % (par_name, video_type), replace_space_with_underscore) + '.%(ext)s')
+                            print outtmpl
+                            edxb._fd.params['outtmpl'] = outtmpl
+                            edxb._fd.download([video_url])
                 except Exception as e:
-                    # print "Error: %s" % e
+                    print "Error: %s" % e
                     pass
 
         return redirect('/')
